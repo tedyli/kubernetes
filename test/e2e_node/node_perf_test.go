@@ -25,6 +25,7 @@ import (
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	"k8s.io/kubernetes/test/e2e_node/perf/workloads"
 
 	. "github.com/onsi/ginkgo"
@@ -55,7 +56,7 @@ func setKubeletConfig(f *framework.Framework, cfg *kubeletconfig.KubeletConfigur
 
 // Serial because the test updates kubelet configuration.
 // Slow by design.
-var _ = SIGDescribe("Node Performance Testing [Serial] [Slow]", func() {
+var _ = SIGDescribe("Node Performance Testing [Serial] [Slow] [Flaky]", func() {
 	f := framework.NewDefaultFramework("node-performance-testing")
 	var (
 		wl     workloads.NodePerfWorkload
@@ -93,7 +94,7 @@ var _ = SIGDescribe("Node Performance Testing [Serial] [Slow]", func() {
 		pod = f.PodClient().CreateSync(pod)
 		// Wait for pod success.
 		f.PodClient().WaitForSuccess(pod.Name, wl.Timeout())
-		podLogs, err := framework.GetPodLogs(f.ClientSet, f.Namespace.Name, pod.Name, pod.Spec.Containers[0].Name)
+		podLogs, err := e2epod.GetPodLogs(f.ClientSet, f.Namespace.Name, pod.Name, pod.Spec.Containers[0].Name)
 		framework.ExpectNoError(err)
 		perf, err := wl.ExtractPerformanceFromLogs(podLogs)
 		framework.ExpectNoError(err)

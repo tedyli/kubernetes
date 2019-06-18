@@ -40,6 +40,8 @@ import (
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/registry/core/service/portallocator"
 	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
+	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2essh "k8s.io/kubernetes/test/e2e/framework/ssh"
 	testutils "k8s.io/kubernetes/test/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
@@ -323,34 +325,14 @@ func (j *ServiceTestJig) CreateLoadBalancerService(namespace, serviceName string
 	return svc
 }
 
-// GetNodeAddresses returns a list of addresses of the given addressType for the given node
-func GetNodeAddresses(node *v1.Node, addressType v1.NodeAddressType) (ips []string) {
-	for j := range node.Status.Addresses {
-		nodeAddress := &node.Status.Addresses[j]
-		if nodeAddress.Type == addressType && nodeAddress.Address != "" {
-			ips = append(ips, nodeAddress.Address)
-		}
-	}
-	return
-}
-
-// CollectAddresses returns a list of addresses of the given addressType for the given list of nodes
-func CollectAddresses(nodes *v1.NodeList, addressType v1.NodeAddressType) []string {
-	ips := []string{}
-	for i := range nodes.Items {
-		ips = append(ips, GetNodeAddresses(&nodes.Items[i], addressType)...)
-	}
-	return ips
-}
-
 // GetNodePublicIps returns a public IP list of nodes.
 func GetNodePublicIps(c clientset.Interface) ([]string, error) {
 	nodes := GetReadySchedulableNodesOrDie(c)
 
-	ips := CollectAddresses(nodes, v1.NodeExternalIP)
+	ips := e2enode.CollectAddresses(nodes, v1.NodeExternalIP)
 	if len(ips) == 0 {
 		// If ExternalIP isn't set, assume the test programs can reach the InternalIP
-		ips = CollectAddresses(nodes, v1.NodeInternalIP)
+		ips = e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
 	}
 	return ips, nil
 }
@@ -407,7 +389,7 @@ func (j *ServiceTestJig) GetEndpointNodes(svc *v1.Service) map[string][]string {
 	nodeMap := map[string][]string{}
 	for _, n := range nodes.Items {
 		if epNodes.Has(n.Name) {
-			nodeMap[n.Name] = GetNodeAddresses(&n, v1.NodeExternalIP)
+			nodeMap[n.Name] = e2enode.GetAddresses(&n, v1.NodeExternalIP)
 		}
 	}
 	return nodeMap
@@ -818,7 +800,7 @@ func (j *ServiceTestJig) waitForPodsCreated(namespace string, replicas int) ([]s
 
 func (j *ServiceTestJig) waitForPodsReady(namespace string, pods []string) error {
 	timeout := 2 * time.Minute
-	if !CheckPodsRunningReady(j.Client, namespace, pods, timeout) {
+	if !e2epod.CheckPodsRunningReady(j.Client, namespace, pods, timeout) {
 		return fmt.Errorf("timeout waiting for %d pods to be ready", len(pods))
 	}
 	return nil
@@ -1303,9 +1285,9 @@ func StopServeHostnameService(clientset clientset.Interface, ns, name string) er
 // in the cluster. Each pod in the service is expected to echo its name. These
 // names are compared with the given expectedPods list after a sort | uniq.
 func VerifyServeHostnameServiceUp(c clientset.Interface, ns, host string, expectedPods []string, serviceIP string, servicePort int) error {
-	execPodName := CreateExecPodOrFail(c, ns, "execpod-", nil)
+	execPodName := e2epod.CreateExecPodOrFail(c, ns, "execpod-", nil)
 	defer func() {
-		DeletePodOrFail(c, ns, execPodName)
+		e2epod.DeletePodOrFail(c, ns, execPodName)
 	}()
 
 	// Loop a bunch of times - the proxy is randomized, so we want a good

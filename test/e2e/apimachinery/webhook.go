@@ -25,7 +25,7 @@ import (
 	"k8s.io/api/admissionregistration/v1beta1"
 	apps "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
-	rbacv1beta1 "k8s.io/api/rbac/v1beta1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	crdclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -40,6 +40,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2edeploy "k8s.io/kubernetes/test/e2e/framework/deployment"
 	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	"k8s.io/kubernetes/test/utils/crd"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	"k8s.io/utils/pointer"
@@ -64,7 +65,6 @@ const (
 	attachingPodWebhookConfigName          = "e2e-test-webhook-config-attaching-pod"
 	mutatingWebhookConfigName              = "e2e-test-mutating-webhook-config"
 	podMutatingWebhookConfigName           = "e2e-test-mutating-webhook-pod"
-	crMutatingWebhookConfigName            = "e2e-test-mutating-webhook-config-cr"
 	webhookFailClosedConfigName            = "e2e-test-webhook-fail-closed"
 	validatingWebhookForWebhooksConfigName = "e2e-test-validating-webhook-for-webhooks-config"
 	mutatingWebhookForWebhooksConfigName   = "e2e-test-mutating-webhook-for-webhooks-config"
@@ -233,13 +233,6 @@ var _ = SIGDescribe("AdmissionWebhook", func() {
 		testMutatingCustomResourceWebhook(f, testcrd.Crd, testcrd.DynamicClients["v1"], prune)
 	})
 
-	ginkgo.It("Should deny crd creation", func() {
-		crdWebhookCleanup := registerValidatingWebhookForCRD(f, context)
-		defer crdWebhookCleanup()
-
-		testCRDDenyWebhook(f)
-	})
-
 	ginkgo.It("Should honor timeout", func() {
 		policyFail := v1beta1.Fail
 		policyIgnore := v1beta1.Ignore
@@ -278,20 +271,20 @@ func createAuthReaderRoleBinding(f *framework.Framework, namespace string) {
 	ginkgo.By("Create role binding to let webhook read extension-apiserver-authentication")
 	client := f.ClientSet
 	// Create the role binding to allow the webhook read the extension-apiserver-authentication configmap
-	_, err := client.RbacV1beta1().RoleBindings("kube-system").Create(&rbacv1beta1.RoleBinding{
+	_, err := client.RbacV1().RoleBindings("kube-system").Create(&rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: roleBindingName,
 			Annotations: map[string]string{
-				rbacv1beta1.AutoUpdateAnnotationKey: "true",
+				rbacv1.AutoUpdateAnnotationKey: "true",
 			},
 		},
-		RoleRef: rbacv1beta1.RoleRef{
+		RoleRef: rbacv1.RoleRef{
 			APIGroup: "",
 			Kind:     "Role",
 			Name:     "extension-apiserver-authentication-reader",
 		},
 		// Webhook uses the default service account.
-		Subjects: []rbacv1beta1.Subject{
+		Subjects: []rbacv1.Subject{
 			{
 				Kind:      "ServiceAccount",
 				Name:      "default",
@@ -436,7 +429,7 @@ func registerWebhook(f *framework.Framework, context *certContext) func() {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: configName,
 		},
-		Webhooks: []v1beta1.Webhook{
+		Webhooks: []v1beta1.ValidatingWebhook{
 			{
 				Name: "deny-unwanted-pod-container-name-and-label.k8s.io",
 				Rules: []v1beta1.RuleWithOperations{{
@@ -517,7 +510,7 @@ func registerWebhookForAttachingPod(f *framework.Framework, context *certContext
 		ObjectMeta: metav1.ObjectMeta{
 			Name: configName,
 		},
-		Webhooks: []v1beta1.Webhook{
+		Webhooks: []v1beta1.ValidatingWebhook{
 			{
 				Name: "deny-attaching-pod.k8s.io",
 				Rules: []v1beta1.RuleWithOperations{{
@@ -561,7 +554,7 @@ func registerMutatingWebhookForConfigMap(f *framework.Framework, context *certCo
 		ObjectMeta: metav1.ObjectMeta{
 			Name: configName,
 		},
-		Webhooks: []v1beta1.Webhook{
+		Webhooks: []v1beta1.MutatingWebhook{
 			{
 				Name: "adding-configmap-data-stage-1.k8s.io",
 				Rules: []v1beta1.RuleWithOperations{{
@@ -638,7 +631,7 @@ func registerMutatingWebhookForPod(f *framework.Framework, context *certContext)
 		ObjectMeta: metav1.ObjectMeta{
 			Name: configName,
 		},
-		Webhooks: []v1beta1.Webhook{
+		Webhooks: []v1beta1.MutatingWebhook{
 			{
 				Name: "adding-init-container.k8s.io",
 				Rules: []v1beta1.RuleWithOperations{{
@@ -826,7 +819,7 @@ func testAttachingPodWebhook(f *framework.Framework) {
 	pod := toBeAttachedPod(f)
 	_, err := client.CoreV1().Pods(f.Namespace.Name).Create(pod)
 	framework.ExpectNoError(err, "failed to create pod %s in namespace: %s", pod.Name, f.Namespace.Name)
-	err = framework.WaitForPodNameRunningInNamespace(client, pod.Name, f.Namespace.Name)
+	err = e2epod.WaitForPodNameRunningInNamespace(client, pod.Name, f.Namespace.Name)
 	framework.ExpectNoError(err, "error while waiting for pod %s to go to Running phase in namespace: %s", pod.Name, f.Namespace.Name)
 
 	ginkgo.By("'kubectl attach' the pod, should be denied by the webhook")
@@ -841,8 +834,8 @@ func testAttachingPodWebhook(f *framework.Framework) {
 
 // failingWebhook returns a webhook with rule of create configmaps,
 // but with an invalid client config so that server cannot communicate with it
-func failingWebhook(namespace, name string) v1beta1.Webhook {
-	return v1beta1.Webhook{
+func failingWebhook(namespace, name string) v1beta1.ValidatingWebhook {
+	return v1beta1.ValidatingWebhook{
 		Name: name,
 		Rules: []v1beta1.RuleWithOperations{{
 			Operations: []v1beta1.OperationType{v1beta1.Create},
@@ -889,7 +882,7 @@ func registerFailClosedWebhook(f *framework.Framework, context *certContext) fun
 		ObjectMeta: metav1.ObjectMeta{
 			Name: configName,
 		},
-		Webhooks: []v1beta1.Webhook{
+		Webhooks: []v1beta1.ValidatingWebhook{
 			// Server cannot talk to this webhook, so it always fails.
 			// Because this webhook is configured fail-closed, request should be rejected after the call fails.
 			hook,
@@ -945,7 +938,7 @@ func registerValidatingWebhookForWebhookConfigurations(f *framework.Framework, c
 		ObjectMeta: metav1.ObjectMeta{
 			Name: configName,
 		},
-		Webhooks: []v1beta1.Webhook{
+		Webhooks: []v1beta1.ValidatingWebhook{
 			{
 				Name: "deny-webhook-configuration-deletions.k8s.io",
 				Rules: []v1beta1.RuleWithOperations{{
@@ -998,7 +991,7 @@ func registerMutatingWebhookForWebhookConfigurations(f *framework.Framework, con
 		ObjectMeta: metav1.ObjectMeta{
 			Name: configName,
 		},
-		Webhooks: []v1beta1.Webhook{
+		Webhooks: []v1beta1.MutatingWebhook{
 			{
 				Name: "add-label-to-webhook-configurations.k8s.io",
 				Rules: []v1beta1.RuleWithOperations{{
@@ -1050,7 +1043,7 @@ func testWebhooksForWebhookConfigurations(f *framework.Framework) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: dummyValidatingWebhookConfigName,
 		},
-		Webhooks: []v1beta1.Webhook{
+		Webhooks: []v1beta1.ValidatingWebhook{
 			{
 				Name: "dummy-validating-webhook.k8s.io",
 				Rules: []v1beta1.RuleWithOperations{{
@@ -1098,7 +1091,7 @@ func testWebhooksForWebhookConfigurations(f *framework.Framework) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: dummyMutatingWebhookConfigName,
 		},
-		Webhooks: []v1beta1.Webhook{
+		Webhooks: []v1beta1.MutatingWebhook{
 			{
 				Name: "dummy-mutating-webhook.k8s.io",
 				Rules: []v1beta1.RuleWithOperations{{
@@ -1293,7 +1286,7 @@ func cleanWebhookTest(client clientset.Interface, namespaceName string) {
 	_ = client.CoreV1().Services(namespaceName).Delete(serviceName, nil)
 	_ = client.AppsV1().Deployments(namespaceName).Delete(deploymentName, nil)
 	_ = client.CoreV1().Secrets(namespaceName).Delete(secretName, nil)
-	_ = client.RbacV1beta1().RoleBindings("kube-system").Delete(roleBindingName, nil)
+	_ = client.RbacV1().RoleBindings("kube-system").Delete(roleBindingName, nil)
 }
 
 func registerWebhookForCustomResource(f *framework.Framework, context *certContext, testcrd *crd.TestCrd) func() {
@@ -1306,7 +1299,7 @@ func registerWebhookForCustomResource(f *framework.Framework, context *certConte
 		ObjectMeta: metav1.ObjectMeta{
 			Name: configName,
 		},
-		Webhooks: []v1beta1.Webhook{
+		Webhooks: []v1beta1.ValidatingWebhook{
 			{
 				Name: "deny-unwanted-custom-resource-data.k8s.io",
 				Rules: []v1beta1.RuleWithOperations{{
@@ -1340,15 +1333,15 @@ func registerWebhookForCustomResource(f *framework.Framework, context *certConte
 
 func registerMutatingWebhookForCustomResource(f *framework.Framework, context *certContext, testcrd *crd.TestCrd) func() {
 	client := f.ClientSet
-	ginkgo.By("Registering the mutating webhook for a custom resource via the AdmissionRegistration API")
+	ginkgo.By(fmt.Sprintf("Registering the mutating webhook for custom resource %s via the AdmissionRegistration API", testcrd.Crd.Name))
 
 	namespace := f.Namespace.Name
-	configName := crMutatingWebhookConfigName
+	configName := f.UniqueName
 	_, err := client.AdmissionregistrationV1beta1().MutatingWebhookConfigurations().Create(&v1beta1.MutatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: configName,
 		},
-		Webhooks: []v1beta1.Webhook{
+		Webhooks: []v1beta1.MutatingWebhook{
 			{
 				Name: "mutate-custom-resource-data-stage-1.k8s.io",
 				Rules: []v1beta1.RuleWithOperations{{
@@ -1543,7 +1536,7 @@ func registerValidatingWebhookForCRD(f *framework.Framework, context *certContex
 		ObjectMeta: metav1.ObjectMeta{
 			Name: configName,
 		},
-		Webhooks: []v1beta1.Webhook{
+		Webhooks: []v1beta1.ValidatingWebhook{
 			{
 				Name: "deny-crd-with-unwanted-label.k8s.io",
 				Rules: []v1beta1.RuleWithOperations{{
@@ -1649,7 +1642,7 @@ func registerSlowWebhook(f *framework.Framework, context *certContext, policy *v
 		ObjectMeta: metav1.ObjectMeta{
 			Name: configName,
 		},
-		Webhooks: []v1beta1.Webhook{
+		Webhooks: []v1beta1.ValidatingWebhook{
 			{
 				Name: "allow-configmap-with-delay-webhook.k8s.io",
 				Rules: []v1beta1.RuleWithOperations{{

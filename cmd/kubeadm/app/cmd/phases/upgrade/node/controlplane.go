@@ -37,6 +37,8 @@ func NewControlPlane() workflow.Phase {
 		InheritFlags: []string{
 			options.DryRun,
 			options.KubeconfigPath,
+			options.CertificateRenewal,
+			options.EtcdUpgrade,
 		},
 	}
 	return phase
@@ -49,9 +51,10 @@ func runControlPlane() func(c workflow.RunData) error {
 			return errors.New("control-plane phase invoked with an invalid data struct")
 		}
 
-		// if this is not a control-plande node, this phase should not be executed
+		// if this is not a control-plane node, this phase should not be executed
 		if !data.IsControlPlaneNode() {
 			fmt.Printf("[upgrade] Skipping phase. Not a control plane node")
+			return nil
 		}
 
 		// otherwise, retrieve all the info required for control plane upgrade

@@ -169,9 +169,13 @@ func (c *csiAttacher) waitForVolumeAttachmentInternal(volumeHandle, attachID str
 	if err != nil {
 		return "", fmt.Errorf("watch error:%v for volume %v", err, volumeHandle)
 	}
-
+	var watcherClosed bool
 	ch := watcher.ResultChan()
-	defer watcher.Stop()
+	defer func() {
+		if !watcherClosed {
+			watcher.Stop()
+		}
+	}()
 
 	for {
 		select {
@@ -197,8 +201,11 @@ func (c *csiAttacher) waitForVolumeAttachmentInternal(volumeHandle, attachID str
 				return "", errors.New("volume attachment has been deleted")
 
 			case watch.Error:
+				// close the watcher to avoid keeping the watcher too log
+				watcher.Stop()
+				watcherClosed = true
 				// start another cycle
-				c.waitForVolumeAttachmentInternal(volumeHandle, attachID, timer, timeout)
+				return c.waitForVolumeAttachmentInternal(volumeHandle, attachID, timer, timeout)
 			}
 
 		case <-timer.C:
@@ -326,7 +333,7 @@ func (c *csiAttacher) MountDevice(spec *volume.Spec, devicePath string, deviceMo
 	}
 	if err = saveVolumeData(dataDir, volDataFileName, data); err != nil {
 		klog.Error(log("failed to save volume info data: %v", err))
-		if cleanerr := os.RemoveAll(dataDir); err != nil {
+		if cleanerr := os.RemoveAll(dataDir); cleanerr != nil {
 			klog.Error(log("failed to remove dir after error [%s]: %v", dataDir, cleanerr))
 		}
 		return err

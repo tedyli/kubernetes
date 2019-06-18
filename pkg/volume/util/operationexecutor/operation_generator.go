@@ -131,7 +131,7 @@ type OperationGenerator interface {
 	GenerateExpandVolumeFunc(*v1.PersistentVolumeClaim, *v1.PersistentVolume) (volumetypes.GeneratedOperations, error)
 
 	// Generates the volume file system resize function, which can resize volume's file system to expected size without unmounting the volume.
-	GenerateExpandVolumeFSWithoutUnmountingFunc(volumeToMount VolumeToMount, actualStateOfWorld ActualStateOfWorldMounterUpdater) (volumetypes.GeneratedOperations, error)
+	GenerateExpandInUseVolumeFunc(volumeToMount VolumeToMount, actualStateOfWorld ActualStateOfWorldMounterUpdater) (volumetypes.GeneratedOperations, error)
 }
 
 func (og *operationGenerator) GenerateVolumesAreAttachedFunc(
@@ -334,24 +334,18 @@ func (og *operationGenerator) GenerateAttachVolumeFunc(
 			volumeToAttach.VolumeSpec, volumeToAttach.NodeName)
 
 		if attachErr != nil {
+			uncertainNode := volumeToAttach.NodeName
 			if derr, ok := attachErr.(*volerr.DanglingAttachError); ok {
-				addErr := actualStateOfWorld.MarkVolumeAsAttached(
-					v1.UniqueVolumeName(""),
-					originalSpec,
-					derr.CurrentNode,
-					derr.DevicePath)
-
-				if addErr != nil {
-					klog.Errorf("AttachVolume.MarkVolumeAsAttached failed to fix dangling volume error for volume %q with %s", volumeToAttach.VolumeName, addErr)
-				}
-
-			} else {
-				addErr := actualStateOfWorld.MarkVolumeAsUncertain(
-					v1.UniqueVolumeName(""), originalSpec, volumeToAttach.NodeName)
-				if addErr != nil {
-					klog.Errorf("AttachVolume.MarkVolumeAsUncertain fail to add the volume %q to actual state with %s", volumeToAttach.VolumeName, addErr)
-				}
+				uncertainNode = derr.CurrentNode
 			}
+			addErr := actualStateOfWorld.MarkVolumeAsUncertain(
+				v1.UniqueVolumeName(""),
+				originalSpec,
+				uncertainNode)
+			if addErr != nil {
+				klog.Errorf("AttachVolume.MarkVolumeAsUncertain fail to add the volume %q to actual state with %s", volumeToAttach.VolumeName, addErr)
+			}
+
 			// On failure, return error. Caller will log and retry.
 			return volumeToAttach.GenerateError("AttachVolume.Attach failed", attachErr)
 		}
@@ -704,7 +698,6 @@ func (og *operationGenerator) GenerateMountVolumeFunc(
 		mountErr := volumeMounter.SetUp(volume.MounterArgs{
 			FsGroup:     fsGroup,
 			DesiredSize: volumeToMount.DesiredSizeLimit,
-			PodUID:      string(volumeToMount.Pod.UID),
 		})
 		if mountErr != nil {
 			// On failure, return error. Caller will log and retry.
@@ -1578,7 +1571,7 @@ func (og *operationGenerator) GenerateExpandVolumeFunc(
 	}, nil
 }
 
-func (og *operationGenerator) GenerateExpandVolumeFSWithoutUnmountingFunc(
+func (og *operationGenerator) GenerateExpandInUseVolumeFunc(
 	volumeToMount VolumeToMount,
 	actualStateOfWorld ActualStateOfWorldMounterUpdater) (volumetypes.GeneratedOperations, error) {
 

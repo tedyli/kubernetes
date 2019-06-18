@@ -29,8 +29,9 @@ import (
 
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2elog "k8s.io/kubernetes/test/e2e/framework/log"
+	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2essh "k8s.io/kubernetes/test/e2e/framework/ssh"
-	"k8s.io/kubernetes/test/images/net/nat"
+	"k8s.io/kubernetes/test/images/agnhost/net/nat"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
 	"github.com/onsi/ginkgo"
@@ -51,7 +52,7 @@ var _ = SIGDescribe("Network", func() {
 
 	ginkgo.It("should set TCP CLOSE_WAIT timeout", func() {
 		nodes := framework.GetReadySchedulableNodesOrDie(fr.ClientSet)
-		ips := framework.CollectAddresses(nodes, v1.NodeInternalIP)
+		ips := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
 
 		if len(nodes.Items) < 2 {
 			framework.Skipf(
@@ -295,7 +296,7 @@ var _ = SIGDescribe("Network", func() {
 				Containers: []v1.Container{
 					{
 						Name:  "startup-script",
-						Image: "gcr.io/google-containers/startup-script:v1",
+						Image: imageutils.GetE2EImage(imageutils.StartupScript),
 						Command: []string{
 							"bash", "-c", "while true; do sleep 2; nc boom-server 9000& done",
 						},
